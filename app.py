@@ -7,7 +7,7 @@ from typing import List, Tuple
 import streamlit as st
 import pandas as pd
 from pypdf import PdfReader
-import docx2txt  # pure-Python
+import docx  # pure-Python
 
 st.set_page_config(page_title="Resume Screener", page_icon="🧾", layout="centered")
 
@@ -72,7 +72,11 @@ def parse_file(uploaded) -> str:
             parts.append(txt)
         text = "\n".join(parts)
     elif name.endswith((".docx", ".doc")):
-        text = docx2txt.process(io.BytesIO(data))
+        import docx  # make sure this import exists at the top
+
+elif name.endswith((".docx", ".doc")):
+    doc = docx.Document(io.BytesIO(data))
+    text = "\n".join([p.text for p in doc.paragraphs])
     elif name.endswith((".txt", ".md")):
         text = data.decode("utf-8", errors="ignore")
     else:
