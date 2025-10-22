@@ -1,5 +1,4 @@
- --prefer-binary
 streamlit==1.39.0
 pdfplumber==0.11.2
-docx2txt==0.8
+python-docx==1.1.2
 pandas==2.2.2
