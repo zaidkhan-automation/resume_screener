@@ -1,5 +1,5 @@
-# Resume Screener SaaS — Streamlit + pypdf (no native builds)
-# Run: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+# app.py — Resume Screener (Pure-Python build: pypdf + python-docx)
+# Run local:  streamlit run app.py --server.port 8501 --server.address 0.0.0.0
 
 import os, io, re, json, datetime as dt
 from typing import List, Tuple
@@ -7,17 +7,17 @@ from typing import List, Tuple
 import streamlit as st
 import pandas as pd
 from pypdf import PdfReader
-import docx  # pure-Python
+import docx  # python-docx
 
+# -------------------- Config --------------------
 st.set_page_config(page_title="Resume Screener", page_icon="🧾", layout="centered")
 
-# ---------- Config ----------
 FREE_LIMIT_PER_DAY = int(os.getenv("FREE_LIMIT_PER_DAY", "5"))
 MAX_MB = float(os.getenv("DEMO_MAX_MB", "5"))
-PAYMENT_URL = "https://rzp.io/rzp/taskmindai-payment"
-CONTACT = "mailto:contact@taskmindai.net"
+PAYMENT_URL = os.getenv("PAYMENT_URL", "https://rzp.io/rzp/taskmindai-payment")
+CONTACT = os.getenv("CONTACT_EMAIL", "mailto:contact@taskmindai.net")
 
-# ---------- Session guards ----------
+# -------------------- Session guards --------------------
 today = dt.date.today()
 if "usage_count" not in st.session_state:
     st.session_state.usage_count = 0
@@ -30,7 +30,7 @@ st.markdown(
     <div style="background:#0f1425;border:1px solid #21304d;padding:12px;border-radius:12px;margin:0 0 16px">
       <b>Demo mode:</b> {st.session_state.usage_count} / {FREE_LIMIT_PER_DAY} free screens today.
       <div style="margin-top:6px">
-        Want unlimited use + team sharing? <a href="{PAYMENT_URL}" target="_blank" style="color:#9cc9ff">Unlock via Razorpay</a> ·
+        Unlimited use + team export? <a href="{PAYMENT_URL}" target="_blank" style="color:#9cc9ff">Unlock via Razorpay</a> ·
         <a href="{CONTACT}" style="color:#9cc9ff">Contact</a>
       </div>
     </div>
@@ -44,12 +44,14 @@ def stop_if_limit():
         st.link_button("💳 Unlock via Razorpay", PAYMENT_URL, use_container_width=True)
         st.stop()
 
-# ---------- skill & regex kit ----------
+# -------------------- Regex & skills kit --------------------
 SKILL_DB = [
     "python","pandas","numpy","fastapi","django","flask","streamlit","sql","postgresql","mysql",
-    "mongodb","excel","power bi","tableau","power query","vlookup","aws","gcp","azure",
-    "docker","kubernetes","git","linux","bash","nlp","ocr","openai","llm","pytorch","tensorflow",
-    "react","node","typescript","javascript","hrms","payroll","tally","ats","api","rest","graphql"
+    "mongodb","excel","power bi","tableau","power query","vlookup",
+    "aws","gcp","azure","docker","kubernetes","git","linux","bash",
+    "nlp","ocr","openai","llm","pytorch","tensorflow",
+    "react","node","typescript","javascript",
+    "hrms","payroll","tally","ats","api","rest","graphql"
 ]
 DEGREE_PAT = r"(b\.?tech|bachelor|be|bsc|msc|mtech|m\.?tech|mba|bca|mca|bcom|mcom|ba|ma)"
 EXP_PAT = r"(\d+)\s*(\+?\s*)?(years?|yrs?)"
@@ -59,30 +61,31 @@ PHONE_PAT = r"(?:\+?\d{1,3}[- ]?)?\d{10}"
 def clean_text(t: str) -> str:
     return re.sub(r"\s+", " ", t.lower()).strip()
 
+# -------------------- File parsers (pure-Python) --------------------
+def parse_pdf(data: bytes) -> str:
+    reader = PdfReader(io.BytesIO(data))
+    parts = []
+    for p in reader.pages[:60]:
+        txt = p.extract_text() or ""
+        parts.append(txt)
+    return "\n".join(parts)
+
+def parse_docx(data: bytes) -> str:
+    document = docx.Document(io.BytesIO(data))
+    return "\n".join(p.text for p in document.paragraphs)
+
 def parse_file(uploaded) -> str:
-    """Read PDF/DOCX/TXT using pure-Python libs only."""
     data = uploaded.read()
     name = uploaded.name.lower()
     if name.endswith(".pdf"):
-        reader = PdfReader(io.BytesIO(data))
-        # pypdf can return None for image-only pages; handle safely
-        parts = []
-        for p in reader.pages[:60]:
-            txt = p.extract_text() or ""
-            parts.append(txt)
-        text = "\n".join(parts)
+        return parse_pdf(data)
     elif name.endswith((".docx", ".doc")):
-        import docx  # make sure this import exists at the top
-
-elif name.endswith((".docx", ".doc")):
-    doc = docx.Document(io.BytesIO(data))
-    text = "\n".join([p.text for p in doc.paragraphs])
+        return parse_docx(data)
     elif name.endswith((".txt", ".md")):
-        text = data.decode("utf-8", errors="ignore")
-    else:
-        raise ValueError("Unsupported file type")
-    return text or ""
+        return data.decode("utf-8", errors="ignore")
+    raise ValueError("Unsupported file type")
 
+# -------------------- Extractors --------------------
 def extract_contact(text: str) -> Tuple[List[str], List[str]]:
     emails = list(dict.fromkeys(re.findall(EMAIL_PAT, text, flags=re.I)))[:2]
     phones = list(dict.fromkeys(re.findall(PHONE_PAT, text, flags=re.I)))[:2]
@@ -104,12 +107,12 @@ def extract_years(text: str):
 def score_resume(jd: str, resume_text: str):
     jd_clean = clean_text(jd)
     res_skills = extract_skills(resume_text)
-    # Skills mentioned in JD from our DB
-    jd_skills = [s for s in SKILL_DB if s in jd_clean.replace(" ","")]
+
+    # JD skills filtered from our DB so score stable rahe
+    jd_skills = [s for s in SKILL_DB if s in jd_clean.replace(" ", "")]
     overlap = sorted(list(set(jd_skills) & set(res_skills)))
     missing = sorted([s for s in jd_skills if s not in res_skills])
 
-    # naive scoring but stable
     skill_score = min(70, len(overlap) * 8)
     exp_res = extract_years(resume_text) or 0
     exp_jd = max([int(x) for x in re.findall(r"(\d+)\+?\s*(?:yrs?|years?)", jd_clean)] or [0])
@@ -126,13 +129,13 @@ def score_resume(jd: str, resume_text: str):
         "has_degree": bool(re.search(DEGREE_PAT, resume_text, flags=re.I)),
     }
 
-# ---------- UI ----------
-st.title("🧾 Resume Screener (Pure-Python build)")
-st.write("Paste a JD and upload a resume (PDF/DOCX/TXT). We’ll extract contacts, detect skills, estimate experience, and score the fit.")
+# -------------------- UI --------------------
+st.title("🧾 Resume Screener")
+st.write("Paste JD, upload resume (PDF/DOCX/TXT). We’ll extract contacts, detect skills, estimate experience, and score the fit.")
 
 c1, c2 = st.columns(2)
 with c1:
-    jd = st.text_area("Job Description", height=220, placeholder="Paste JD with required skills and years…")
+    jd = st.text_area("Job Description", height=220, placeholder="Required skills + years. Example: Python, Pandas, SQL, 2+ years…")
 with c2:
     up = st.file_uploader("Resume file", type=["pdf","docx","doc","txt"], help=f"Max {int(MAX_MB)} MB")
 
@@ -176,6 +179,7 @@ if st.button("🔎 Screen Resume", type="primary", use_container_width=True):
     st.write(f"Years of experience (detected): {res['resume_years'] or '—'}")
     st.write(f"Degree mention: {'Yes' if res['has_degree'] else 'Not found'}")
 
+    # CSV export
     row = {
         "file": up.name,
         "score": res["score"],
@@ -187,10 +191,15 @@ if st.button("🔎 Screen Resume", type="primary", use_container_width=True):
         "skills_missing": ";".join(res["missing_skills"]),
     }
     df = pd.DataFrame([row])
-    st.download_button("📥 Download result (CSV)", df.to_csv(index=False).encode("utf-8"),
-                       file_name=f"screener_{up.name}.csv", use_container_width=True)
+    st.download_button(
+        "📥 Download result (CSV)",
+        df.to_csv(index=False).encode("utf-8"),
+        file_name=f"screener_{up.name}.csv",
+        use_container_width=True,
+    )
 
     st.caption("Demo mode. For unlimited use and ATS export, unlock via Razorpay.")
     st.session_state.usage_count += 1
+
 else:
     st.info("Paste JD and upload a resume to begin.")
